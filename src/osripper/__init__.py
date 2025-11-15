@@ -5,10 +5,10 @@ A sophisticated, fully undetectable (FUD) backdoor generator and crypter.
 
 Author: NoahOksuz
 License: MIT
-Version: 0.3.2
+Version: 0.4.0
 """
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 __author__ = "NoahOksuz"
 __license__ = "MIT"
 
